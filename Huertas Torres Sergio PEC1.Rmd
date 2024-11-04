@@ -1,0 +1,238 @@
+---
+title: "Huertas Torres Sergio PEC1"
+author: "Sergio Huertas Torres"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Informe PEC1 Análisis Datos Ómicos
+
+## Tabla de contendido
+
+## 1-Selección y descarga de datos
+
+## 2- Abstract
+
+## 3- Objetivo del estudio
+
+## 4- Exploración de los datos
+
+## 5- Resultados
+
+## 6- URL repositorio Github
+
+## 1- Descarga de los datos
+
+Descargamos los datos de human cachexia del repositorio de github y los importamos al proyecto.
+
+```{r cars}
+human_cachexia<-read.csv("human_cachexia.csv")
+```
+
+Ejecutamos class para saber de que forma esta organizada la información
+
+```{r}
+class(human_cachexia)
+```
+
+## 2- Abstract
+
+Human_cachexia de metaboAnalyst se trata de una tabla de concentración de metabolitos en muestras de orina humana de dos grupos (cachexic y control).
+
+La caquexia se trata de un síndrome metabólico complicado y relacionado con una enfermedad subyacente caracterizado por la perdida de masa muscular (con o sin perdida de masa grasa).
+
+El dataframe human_cachexia probablemente sea el resultado de un análisis metabólico comparativo entre pacientes con caquexia y un grupo control (quizá en un intento de encontrar metabolitos en orina humana que puedan servir como un indicador del síndrome).
+
+## 3- Objetivo del estudio
+
+Teniendo en cuenta que no tenemos información del objetivo puesto que carecemos de metadatos que lo describan u otras consideraciones podemos realizar una inferencia del objetivo final del estudio:
+
+¿Hay diferencias significativas para la cantidad de alguno del listado de metabolitos detectados en orina entre los grupos Control y Cachexic?
+
+## 4- Exploración de los datos
+
+Realizamos str para hacernos una idea general de la estructura interna del data frame.
+
+```{r}
+str(human_cachexia)
+```
+
+Observamos que se trata de un dataframe con 65 columnas, 63 de ellas son numéricas y dos de "characters"
+
+### 4.1- SummarizedExperiment object
+
+Para generar el objeto SummarizedExperiment debemos importar la librería de SummarizedExperiment.
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+BiocManager::install("SummarizedExperiment")
+library(SummarizedExperiment)
+```
+
+Generamos un data frame solo con los datos numéricos de human_cachexia transpuestos, puesto que para poder generar el object summarizedexperiment las variables están en las filas y las samples en las columnas y en nuestro dataframe están al revés.
+
+Con esto tendremos los datos del assay.
+
+Después generamos el dataframe para col_data y la lista de nombres para colnames.
+
+```{r}
+datos_cachexiat <- t(as.matrix(human_cachexia[, -c(1, 2)]))
+colnames(datos_cachexiat) <- human_cachexia$Patient.ID  
+col_data <- DataFrame(Patient.ID = human_cachexia$Patient.ID, 
+                      Muscle.loss =human_cachexia$Muscle.loss)
+
+se <- SummarizedExperiment(
+  assays = list(counts = datos_cachexiat),
+  colData = col_data
+)
+se
+```
+
+Por último, creamos el objeto en formato binario para añadirlo al repositorio de github:
+
+```{r}
+save(se, file = "summarized_experiment.Rda")
+```
+
+### 4.2- Análisis estadístico
+
+Para realizar el análisis estadístico que responda a la pregunta biológica planteada en el objetivo del estudio realizaremos un conjunto de estudios.
+
+En los datos proporcionados en el repositorio de github nos indican que se tratan de datos desapareados (diferente proporción de control y cachexic).
+Lo comprobamos mediante:
+
+```{r}
+table(human_cachexia$Muscle.loss)
+```
+
+Tendremos que tener este dato en cuenta a la hora de realizar una análisis multivariante.
+Empezamos por crear un data.frame solo con las variables numéricas, sin transponerlas.
+
+```{r}
+datos_cachexia<-human_cachexia[,-c(1:2)]
+```
+
+Después pasamos la variable Muscle.loss de un character a factor para poder utilizarlo en las funciones.
+Realizamos un estudio general de la media, la mean y la desviación estándar.
+
+La revisión de estos datos ya nos puede dar una idea general de las diferencias para los metabolitos entre los dos grupos.
+
+```{r}
+muscle<-as.factor(human_cachexia$Muscle.loss)
+apply(datos_cachexia, MARGIN = 2, FUN = tapply,INDEX=muscle, mean)
+```
+
+```{r}
+apply(datos_cachexia, MARGIN = 2, FUN = tapply,INDEX=muscle, median)
+```
+
+```{r}
+apply(datos_cachexia, MARGIN = 2, FUN = tapply,INDEX=muscle, sd)
+```
+
+Después de evaluar de manera superficial los datos de cada metabolito debemos comprobar que los datos sigan una distribución normal (aunque se podría asumir puesto que la n\>=30).
+
+Para ello hacemos una función con el Saphiro test que nos devuelva la normalidad o no de cada uno de los grupos para cada uno de los metabolitos.
+
+```{r}
+grupo_cachexic <- human_cachexia[human_cachexia$Muscle.loss == "cachexic", ]
+grupo_control <- human_cachexia[human_cachexia$Muscle.loss == "control", ]
+
+p_valores_normalidad <- sapply(names(datos_cachexia), function(metabolito) {
+ 
+  shapiro_cachexic <- shapiro.test(grupo_cachexic[[metabolito]])$p.value
+  shapiro_control <- shapiro.test(grupo_control[[metabolito]])$p.value
+  c(cachexic = shapiro_cachexic, control = shapiro_control)
+})
+
+p_valores_normalidad
+
+```
+
+Con los resultados \<0.05 podemos asumir la normalidad de todos los parámetros.
+
+Después deberemos comprobar si los datos de los metabolitos mantienen su homocedasticidad (homogeneidad de varianzas), factor muy importante cuando se trata de muestras con datos desapareados (diferente n).
+Para ello realizaremos el test de Barlet.
+
+```{r}
+p_valores_varianzas <- sapply(names(datos_cachexia), function(metabolito) {
+  bartlett.test(list(grupo_cachexic[[metabolito]], grupo_control[[metabolito]]))$p.value
+})
+
+p_valores_varianzas
+```
+
+Comprobamos si alguno no mantiene la homogeneidad de las varianzas:
+
+```{r}
+resultados_no_homocedasticidad <- p_valores_varianzas[p_valores_varianzas > 0.05]
+resultados_no_homocedasticidad
+```
+
+Como hemos encontrado valores que no conservan la homocedasticidad deberemos realizar una t de Student con la corrección de Welch para buscar las diferencias en cada uno de los grupos e intentaremos observar que metabolitos tienen diferencias significativas.
+
+Como se suele hacer:
+
+H0: No hay diferencias significativas entre las medias de los 2 grupos, por lo que no podemos asumir que las diferencias observadas no sean fruto del azar.
+
+H1: hay diferencias significativas entre las medias de los 2 grupos, por lo que podemos asumir que las diferencias observadas se deben a los factores dentro de los grupos.
+
+```{r}
+resultados_ttest <- sapply(names(datos_cachexia), function(metabolito) {
+    t.test(grupo_cachexic[[metabolito]], grupo_control[[metabolito]],var.equal=FALSE)$p.value
+  })
+resultados_ttest
+```
+
+Aplicamos el test de Welch con var.equal=FALSE y puesto que el resultado de la comparativa de la t de student es bastante extensa con \$p.value hacemos que solo nos devuelva el valor del p.valor para simplificar la obtención de los resultados.
+
+Del mismo modo podemos obtener un listado con los metabolitos que presenten diferencias significativas y los que no.
+
+```{r}
+resultados_significativos <- resultados_ttest[resultados_ttest < 0.05]
+resultados_significativos
+```
+
+```{r}
+resultados_no_significativos <- resultados_ttest[resultados_ttest > 0.05]
+resultados_no_significativos
+```
+
+Y generar un listado solo con el nombre de lo metabolitos significativos.
+
+```{r}
+metabolitos_significativos <- names(resultados_ttest)[resultados_ttest < 0.05]
+metabolitos_significativos
+```
+
+## 5- Resultados
+
+Con este listado podríamos contestar a la pregunta:
+
+¿hay diferencias significativas entre control y cachexic para la cantidad de alguno de los metabolitos presentes en orina?
+
+Si.
+Hay diferencias significativas.
+
+Si asumimos que la función de este estudio tiene un perfil orientado al diagnostico del síndrome de caquexia se podría utilizar una combinación de ellos para definir un panel de diagnostico que permitiese su utilización en un contexto hospitalario.
+
+La combinación final de metabolitos deberá ser evaluada en función de otras consideraciones como: su detección, su presencia en otras enfermedades o la factibilidad de ser implementado en un laboratorio hospitalario, entre muchas otras.
+
+```{r pressure, echo=FALSE}
+
+```
+
+## 6- URL repositorio Github
+
+<https://github.com/SergioHHTT/Huertas-Torres-Sergio-PEC1>
